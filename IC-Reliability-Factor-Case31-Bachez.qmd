@@ -398,8 +398,8 @@ tibble(
 
 ## Links
 
-- **GitHub Repository:** [View Repository](https://github.com/kebachez/IC-Case-31--Reliability-and-Factor-Analysis)
-- **GitHub Pages:** [View Published Report](https://kebachez.github.io/IC-Case-31--Reliability-and-Factor-Analysis/)
+- **GitHub Repository:** [View Repository](https://github.com/kebachez/IC-Case-31-Reliability-factor-analysis-for-R3-R6.git)
+- **GitHub Pages:** [View Published Report](https://kebachez.github.io/IC-Case-31-Reliability-factor-analysis-for-R3-R6/)
 
 ## R Code
 
