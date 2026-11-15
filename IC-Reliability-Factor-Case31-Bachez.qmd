@@ -1,0 +1,411 @@
+---
+title: "IC: Reliability & Factor Analysis for R3 & R6"
+subtitle: "Case 31: Employees Federal Credit Union"
+author: "Kevin Bachez"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: right
+    theme: cosmo
+    page-layout: full
+    embed-resources: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+
+# Packages ----------------------------------------------------------------
+library(haven)    # read SPSS .sav files
+library(dplyr)    # data wrangling
+library(tidyr)    # reshaping
+library(ggplot2)  # charts
+library(knitr)    # tables
+library(psych)    # KMO, Bartlett, principal(), alpha()
+
+# Data: instructor-provided cleaned file (Case 31 Data_efcu_4.sav) ---------
+# Keep the .sav file in the same folder as this .qmd file
+efcu <- read_sav("Case 31 Data_efcu_4.sav")
+
+emp_labels <- c(q3 = "Q3: Employees are courteous",
+                q4 = "Q4: Employees are helpful",
+                q5 = "Q5: Employees are professional",
+                q6 = "Q6: Employees are always available")
+
+ops_labels <- c(q31 = "Q31: Personnel keep financial info confidential",
+                q32 = "Q32: Prompt in processing loan applications",
+                q33 = "Q33: Financial services meet members' needs",
+                q34 = "Q34: Loan applications simple and easy")
+
+# Item sets (plain numeric, no SPSS labels)
+emp <- efcu |> select(all_of(names(emp_labels))) |>
+  mutate(across(everything(), as.numeric)) |> as.data.frame()
+ops <- efcu |> select(all_of(names(ops_labels))) |>
+  mutate(across(everything(), as.numeric)) |> as.data.frame()
+both <- cbind(emp, ops)
+
+all_labels <- c(emp_labels, ops_labels)
+
+# Helper 1: KMO and Bartlett's test summary row ---------------------------
+adequacy_row <- function(d, scale) {
+  k <- KMO(d)
+  b <- cortest.bartlett(cor(d), n = nrow(d))
+  tibble(Scale = scale,
+         Items = ncol(d),
+         KMO = round(k$MSA, 2),
+         `Bartlett chi-square` = round(b$chisq, 2),
+         df = b$df,
+         p = format.pval(b$p.value, digits = 3, eps = .001))
+}
+
+# Helper 2: eigenvalue table ----------------------------------------------
+eigen_tbl <- function(d) {
+  ev <- eigen(cor(d))$values
+  tibble(Component = seq_along(ev),
+         Eigenvalue = round(ev, 3),
+         `% of variance` = round(100 * ev / length(ev), 1),
+         `Cumulative %` = round(cumsum(100 * ev / length(ev)), 1))
+}
+
+# Helper 3: loadings + communalities table from principal() ---------------
+loading_tbl <- function(pca, labels) {
+  L <- unclass(pca$loadings)
+  as.data.frame(round(L, 2)) |>
+    mutate(Item = labels[rownames(L)],
+           `Communality (h2)` = round(pca$communality, 2)) |>
+    select(Item, everything()) |>
+    tibble::as_tibble()   # drop row names so kable shows one Item column
+}
+
+# Helper 4: scree plot ----------------------------------------------------
+scree_plot <- function(d) {
+  eigen_tbl(d) |>
+    ggplot(aes(x = Component, y = Eigenvalue)) +
+    geom_line(colour = "steelblue") +
+    geom_point(size = 2.5, colour = "steelblue") +
+    geom_hline(yintercept = 1, linetype = "dashed", colour = "darkorange") +
+    scale_x_continuous(breaks = seq_len(ncol(d))) +
+    labs(x = "Component", y = "Eigenvalue (dashed line = 1)") +
+    theme_minimal()
+}
+
+# Helper 5: Cronbach's alpha item statistics ------------------------------
+alpha_item_tbl <- function(d, labels) {
+  a <- psych::alpha(d)
+  tibble(Item = labels[rownames(a$item.stats)],
+         Mean = round(a$item.stats$mean, 2),
+         SD = round(a$item.stats$sd, 2),
+         `Corrected item-total r` = round(a$item.stats$r.drop, 2),
+         `Alpha if item deleted` = round(a$alpha.drop$raw_alpha, 3))
+}
+```
+
+# Purpose & Analysis Plan
+
+Research questions R3 and R6 each use a **multi-item scale**. Before using these scales to answer the research questions, I check whether each one measures what it is meant to measure (**validity**) and whether it does so consistently (**reliability**). The results decide whether the items can be averaged into a single composite score.
+
+```{r}
+#| label: tbl-plan
+#| tbl-cap: "Multi-item scales and analyses"
+
+tibble(
+  RQ = c("R3", "R6"),
+  Construct = c("Attitude toward employee proficiency",
+                "Attitude toward operational effectiveness"),
+  Items = c("Q3 – Q6 (4 items)", "Q31 – Q34 (4 items)"),
+  Scale = c("5-point agreement (interval)", "5-point agreement (interval)"),
+  Analyses = c("KMO & Bartlett; PCA (eigenvalues, scree, loadings, communalities); Cronbach's alpha",
+               "KMO & Bartlett; PCA (eigenvalues, scree, loadings, communalities); Cronbach's alpha")
+) |>
+  kable()
+```
+
+The analysis follows three steps:
+
+1. **Convergent validity** (each scale on its own). If the items measure one construct, a single component should emerge, the items should load strongly on it (≥ .50), and their communalities should be adequate (≥ .40).
+2. **Discriminant validity** (both scales together). With all eight items in one analysis, the employee items should form one factor and the operations items another, with no item loading strongly on the wrong factor.
+3. **Reliability** (Cronbach's alpha). Alpha should reach at least .70. The corrected item-total correlations and "alpha if item deleted" show whether any item weakens the scale.
+
+Principal component analysis (PCA) with varimax rotation is used for the factor analyses. All 128 members answered every item, so no cases are lost.
+
+# R3: Attitude Toward Employee Proficiency (Q3 – Q6)
+
+## R3: Inter-Item Correlations
+
+```{r}
+#| label: tbl-r3-cor
+#| tbl-cap: "Correlations among the employee proficiency items (Q3 – Q6)"
+
+round(cor(emp), 2) |> kable()
+```
+
+## R3: Sampling Adequacy (KMO & Bartlett's Test)
+
+```{r}
+#| label: tbl-r3-kmo
+#| tbl-cap: "KMO measure of sampling adequacy and Bartlett's test of sphericity (Q3 – Q6)"
+
+adequacy_row(emp, "Employee proficiency (Q3 – Q6)") |> kable()
+```
+
+## R3: Factor Analysis (Convergent Validity)
+
+:::: {.columns}
+::: {.column width="48%"}
+```{r}
+#| label: tbl-r3-eigen
+#| tbl-cap: "Eigenvalues and variance explained (Q3 – Q6)"
+
+eigen_tbl(emp) |> kable()
+```
+:::
+
+::: {.column width="4%"}
+:::
+
+::: {.column width="48%"}
+```{r}
+#| label: fig-r3-scree
+#| fig-cap: "Scree plot for the employee proficiency items"
+#| fig-width: 5
+#| fig-height: 3.2
+
+scree_plot(emp)
+```
+:::
+::::
+
+```{r}
+#| label: tbl-r3-load
+#| tbl-cap: "Component loadings and communalities, one-component solution (Q3 – Q6)"
+
+r3_pca <- principal(emp, nfactors = 1)
+loading_tbl(r3_pca, emp_labels) |> kable()
+```
+
+## R3: Reliability (Cronbach's Alpha)
+
+```{r}
+#| label: tbl-r3-alpha
+#| tbl-cap: "Cronbach's alpha for the employee proficiency scale (Q3 – Q6)"
+
+r3_alpha <- psych::alpha(emp)
+tibble(Scale = "Employee proficiency (Q3 – Q6)",
+       Items = ncol(emp),
+       `Cronbach's alpha` = round(r3_alpha$total$raw_alpha, 3),
+       `Standardized alpha` = round(r3_alpha$total$std.alpha, 3),
+       `Average inter-item r` = round(r3_alpha$total$average_r, 2)) |>
+  kable()
+```
+
+```{r}
+#| label: tbl-r3-items
+#| tbl-cap: "Item-total statistics for the employee proficiency scale"
+
+alpha_item_tbl(emp, emp_labels) |> kable()
+```
+
+## R3: Interpretation
+
+**Validity.** The four employee items clearly measure one construct. They are strongly correlated with one another (r = .46 to .72; @tbl-r3-cor). The data are well suited to factor analysis: the KMO is .78 ("middling" to "meritorious"), and Bartlett's test is significant (χ²(6) = 263.61, p < .001; @tbl-r3-kmo). Only **one** component has an eigenvalue above 1 (2.88), and it explains 72.0% of the variance. The scree plot drops sharply after the first component (@tbl-r3-eigen, @fig-r3-scree). Every item loads strongly on that component (.81 to .91), and every communality is high (.65 to .83; @tbl-r3-load). Together, these results show **convergent validity**.
+
+**Reliability.** Cronbach's alpha is .87, well above the .70 benchmark (@tbl-r3-alpha). Every item correlates well with the rest of the scale (corrected item-total r = .66 to .82), and deleting any item would *lower* alpha (@tbl-r3-items). No item needs to be removed.
+
+# R6: Attitude Toward Operational Effectiveness (Q31 – Q34)
+
+## R6: Inter-Item Correlations
+
+```{r}
+#| label: tbl-r6-cor
+#| tbl-cap: "Correlations among the operational effectiveness items (Q31 – Q34)"
+
+round(cor(ops), 2) |> kable()
+```
+
+## R6: Sampling Adequacy (KMO & Bartlett's Test)
+
+```{r}
+#| label: tbl-r6-kmo
+#| tbl-cap: "KMO measure of sampling adequacy and Bartlett's test of sphericity (Q31 – Q34)"
+
+adequacy_row(ops, "Operational effectiveness (Q31 – Q34)") |> kable()
+```
+
+## R6: Factor Analysis (Convergent Validity)
+
+:::: {.columns}
+::: {.column width="48%"}
+```{r}
+#| label: tbl-r6-eigen
+#| tbl-cap: "Eigenvalues and variance explained (Q31 – Q34)"
+
+eigen_tbl(ops) |> kable()
+```
+:::
+
+::: {.column width="4%"}
+:::
+
+::: {.column width="48%"}
+```{r}
+#| label: fig-r6-scree
+#| fig-cap: "Scree plot for the operational effectiveness items"
+#| fig-width: 5
+#| fig-height: 3.2
+
+scree_plot(ops)
+```
+:::
+::::
+
+```{r}
+#| label: tbl-r6-load1
+#| tbl-cap: "Component loadings and communalities, forced one-component solution (Q31 – Q34)"
+
+r6_pca1 <- principal(ops, nfactors = 1)
+loading_tbl(r6_pca1, ops_labels) |> kable()
+```
+
+```{r}
+#| label: tbl-r6-load2
+#| tbl-cap: "Rotated component loadings, two-component solution (eigenvalue > 1, varimax)"
+
+r6_pca2 <- principal(ops, nfactors = 2, rotate = "varimax")
+loading_tbl(r6_pca2, ops_labels) |> kable()
+```
+
+## R6: Reliability (Cronbach's Alpha)
+
+```{r}
+#| label: tbl-r6-alpha
+#| tbl-cap: "Cronbach's alpha for the operational effectiveness items (Q31 – Q34)"
+
+r6_alpha <- psych::alpha(ops)
+tibble(Scale = "Operational effectiveness (Q31 – Q34)",
+       Items = ncol(ops),
+       `Cronbach's alpha` = round(r6_alpha$total$raw_alpha, 3),
+       `Standardized alpha` = round(r6_alpha$total$std.alpha, 3),
+       `Average inter-item r` = round(r6_alpha$total$average_r, 2)) |>
+  kable()
+```
+
+```{r}
+#| label: tbl-r6-items
+#| tbl-cap: "Item-total statistics for the operational effectiveness items"
+
+alpha_item_tbl(ops, ops_labels) |> kable()
+```
+
+## R6: Interpretation
+
+**Validity.** The four operations items do **not** behave like one scale. Their correlations are weak, and some are near zero: Q31 with Q34 is .00, and Q33 with Q34 is .04 (@tbl-r6-cor). The KMO is only .50, the lowest acceptable value ("miserable"), and two items fall below .50 (Q31 = .49, Q34 = .46). Bartlett's test is significant (χ²(6) = 39.33, p < .001; @tbl-r6-kmo), but that only shows the items are not completely unrelated.
+
+**Two** components have eigenvalues above 1 (1.58 and 1.03; @tbl-r6-eigen, @fig-r6-scree). When the items are forced into one component, it explains only 39.4% of the variance. Q31 and Q33 then load weakly (.51 and .48), and their communalities are very low (.26 and .23; @tbl-r6-load1). The two-component solution shows why (@tbl-r6-load2):
+
+- **Loan process:** Q34 (simple and easy applications, .91) and Q32 (prompt processing, .72).
+- **Confidentiality and services:** Q31 (confidentiality, .78) and Q33 (services meet needs, .65).
+
+Q32 also cross-loads on the second component (.46). These items cover several different aspects of operations rather than one shared attitude, so **convergent validity is not supported**.
+
+**Reliability.** Cronbach's alpha is only .47, far below .70 (@tbl-r6-alpha). Corrected item-total correlations are low (.19 to .49). Deleting any one item would not raise alpha above .48, and deleting Q32 would drop it to .14 (@tbl-r6-items). No single item is the problem. The four items simply do not hang together.
+
+# Discriminant Validity: All Eight Items Together
+
+## Combined: Sampling Adequacy & Eigenvalues
+
+```{r}
+#| label: tbl-both-kmo
+#| tbl-cap: "KMO and Bartlett's test for all eight items"
+
+adequacy_row(both, "All items (Q3 – Q6, Q31 – Q34)") |> kable()
+```
+
+```{r}
+#| label: tbl-both-eigen
+#| tbl-cap: "Eigenvalues and variance explained (all eight items)"
+
+eigen_tbl(both) |> kable()
+```
+
+```{r}
+#| label: fig-both-scree
+#| fig-cap: "Scree plot for all eight items"
+#| fig-width: 7
+#| fig-height: 3.2
+
+scree_plot(both)
+```
+
+## Combined: Rotated Component Loadings
+
+```{r}
+#| label: tbl-both-load
+#| tbl-cap: "Rotated component loadings, two-component solution (varimax); loadings ≥ .40 in bold"
+
+both_pca <- principal(both, nfactors = 2, rotate = "varimax")
+L <- unclass(both_pca$loadings)
+tibble(Item = all_labels[rownames(L)],
+       `Intended construct` = ifelse(rownames(L) %in% names(emp_labels),
+                                     "Employee proficiency", "Operational effectiveness"),
+       RC1 = ifelse(abs(L[, 1]) >= .40, paste0("**", sprintf("%.2f", L[, 1]), "**"),
+                    sprintf("%.2f", L[, 1])),
+       RC2 = ifelse(abs(L[, 2]) >= .40, paste0("**", sprintf("%.2f", L[, 2]), "**"),
+                    sprintf("%.2f", L[, 2])),
+       `Communality (h2)` = round(both_pca$communality, 2)) |>
+  kable()
+```
+
+## Combined: Interpretation
+
+When all eight items are analyzed together (KMO = .80, Bartlett χ²(28) = 360.10, p < .001; @tbl-both-kmo), two components have eigenvalues above 1. Together they explain 59.0% of the variance (@tbl-both-eigen, @fig-both-scree).
+
+- **Employee proficiency shows discriminant validity.** Q3 – Q6 all load strongly on the first component (.78 to .88) and weakly on the second (−.09 to .19). They form their own distinct factor (@tbl-both-load).
+- **Operational effectiveness does not.** Only Q32 and Q34 (the loan process items) form the second component (.75 and .86). Q33 (services meet needs) loads on the *employee* component instead (.51). Q31 (confidentiality) does not load clearly on either component (.37 and .19, communality .17). The operations items therefore do not form a separate construct distinct from attitudes toward employees.
+
+# Summary & Implications for Data Analysis
+
+```{r}
+#| label: tbl-summary
+#| tbl-cap: "Summary of validity and reliability results"
+
+tibble(
+  Criterion = c("KMO (≥ .60 preferred)", "Components with eigenvalue > 1",
+                "Variance explained (1 component)", "Loadings (≥ .50)",
+                "Communalities (≥ .40)", "Discriminant validity (8-item PCA)",
+                "Cronbach's alpha (≥ .70)", "Decision"),
+  `R3: Employee proficiency (Q3 – Q6)` = c(
+    ".78 ✓", "1 ✓", "72.0% ✓", ".81 – .91 ✓", ".65 – .83 ✓",
+    "Items form their own factor ✓", ".87 ✓",
+    "Create composite (Att_employee)"),
+  `R6: Operational effectiveness (Q31 – Q34)` = c(
+    ".50 ✗", "2 ✗", "39.4% ✗", ".48 – .84 (mixed)", ".23 – .71 (mixed)",
+    "Q31 and Q33 do not load on their own factor ✗", ".47 ✗",
+    "No composite; analyze items separately")
+) |>
+  kable()
+```
+
+**R3: employee proficiency (Q3 – Q6).** The scale is **valid and reliable**. One factor emerges, all items load strongly, the items separate cleanly from the operations items, and alpha is .87. In the next step of data analysis, the four items will be averaged into a single composite, **Att_employee = mean(Q3, Q4, Q5, Q6)**. This composite will be used for R3 (a one-sample t-test against the neutral point) and wherever attitude toward employees appears as a variable, such as R4a and H3b.
+
+**R6: operational effectiveness (Q31 – Q34).** The items are **neither valid nor reliable as a single scale**. They split into at least two different aspects (the loan process vs. confidentiality and services), they do not separate from attitudes toward employees, and alpha is only .47. Averaging them would mix unrelated opinions and hide what members actually think. In the next step, **no composite will be created**. Q31, Q32, Q33, and Q34 will be analyzed **as separate items** for R6 and R4c, and when used as predictors, such as in H5a – H5d. The two loan process items (Q32 and Q34) are the only pair that clearly group together. With only two items and a modest correlation (r = .39), however, they are also better reported separately.
+
+# Appendix
+
+## Links
+
+- **GitHub Repository:** [View Repository](https://github.com/kebachez/IC-Case-31--Reliability-and-Factor-Analysis)
+- **GitHub Pages:** [View Published Report](https://kebachez.github.io/IC-Case-31--Reliability-and-Factor-Analysis/)
+
+## R Code
+
+```{r}
+#| label: all-code
+#| ref.label: !expr knitr::all_labels()
+#| echo: true
+#| eval: false
+```
